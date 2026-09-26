@@ -1,0 +1,61 @@
+{
+  "_readme": "Fill this in (or send your details to Claude to fill it), then import it in LifeOS: Vault → Import JSON. NEVER commit this plain file to your repo. Only data.enc.json goes there.",
+  "version": 1,
+  "meta": { "demo": false },
+  "profile": {
+    "name": "Joe",
+    "avatar": "🧑‍🚀",
+    "photo": "",
+    "dob": "YYYY-MM-DDTHH:MM",
+    "lifeYears": 80,
+    "heightCm": 175,
+    "tagline": "Engineer · Novelist · Builder",
+    "location": "Singapore",
+    "status": { "emoji": "🚀", "text": "Locked in" }
+  },
+  "goals": [
+    {
+      "title": "Ace MSc Robotics & Intelligent Systems",
+      "category": "Education",
+      "attr": "INT",
+      "start": "2026-08-01",
+      "due": "2027-07-31",
+      "progress": 0,
+      "milestones": [ { "t": "Semester 1 exams", "done": false } ]
+    }
+  ],
+  "health": {
+    "metrics": [
+      { "key": "weight", "label": "Weight", "unit": "kg", "target": 74, "better": "target",
+        "entries": [ { "date": "2026-09-25", "value": 72.5 } ] }
+    ],
+    "reports": [
+      { "date": "2026-08-16", "title": "Blood panel", "notes": "",
+        "markers": [ { "name": "Vitamin D", "value": 21, "unit": "ng/mL", "min": 30, "max": 100 } ] }
+    ]
+  },
+  "gym": {
+    "split": [
+      { "dow": 1, "name": "Push A", "exercises": [ { "name": "Bench Press", "sets": 4, "reps": "6-8", "weight": 60 } ] },
+      { "dow": 0, "name": "Rest", "exercises": [] }
+    ],
+    "logs": [
+      { "date": "2026-09-22", "day": "Push A", "sets": [ { "ex": "Bench Press", "w": 60, "r": 8 } ] }
+    ]
+  },
+  "routine": [ { "time": "06:15", "label": "Wake · water · stretch", "icon": "🌅" } ],
+  "quests": [
+    { "id": "gym", "title": "Train (gym session)", "icon": "🏋️", "attr": "STR", "xp": 30 },
+    { "id": "water", "title": "Drink 3L water", "icon": "💧", "attr": "VIT", "xp": 10 },
+    { "id": "sleep", "title": "Sleep 7h+", "icon": "🌙", "attr": "VIT", "xp": 15 }
+  ],
+  "log": {
+    "2026-09-24": { "q": { "gym": true, "water": true }, "sleepH": 7.2, "waterL": 3.1, "mood": "🙂" }
+  },
+  "tasks": [
+    { "title": "Read kinematics ch. 3", "due": "2026-09-26", "prio": "med", "attr": "INT", "xp": 20, "done": false }
+  ],
+  "journey": [
+    { "date": "2026-08", "title": "Moved to Singapore · NTU MSc begins", "desc": "", "icon": "✈️" }
+  ]
+}
