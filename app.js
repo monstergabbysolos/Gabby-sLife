@@ -761,7 +761,7 @@ V.vault = () => {
       <p class="small muted" style="margin-bottom:12px">Save straight from any device. Use a <b>fine-grained token</b> scoped to this one repo with <i>Contents: read & write</i>. The token is stored encrypted on this device only.</p>
       <form id="ghform"><div class="row"><div class="grow field"><label class="fl">Owner</label><input class="in" name="owner" value="${esc(g.owner || '')}" placeholder="your-username"></div><div class="grow field"><label class="fl">Repo</label><input class="in" name="repo" value="${esc(g.repo || '')}" placeholder="lifeos"></div></div>
       <div class="row"><div class="grow field"><label class="fl">Branch</label><input class="in" name="branch" value="${esc(g.branch || 'main')}"></div><div class="grow field"><label class="fl">Token</label><input class="in" name="token" type="password" value="${esc(g.token || '')}" placeholder="github_pat_…"></div></div>
-      <div class="row"><button class="btn primary">Save settings</button><button type="button" class="btn" data-act="ghPull">Pull latest</button></div></form></section>
+      <div class="row"><button class="btn primary">Save settings</button><button type="button" class="btn" data-act="ghTest">Test connection</button><button type="button" class="btn" data-act="ghPull">Pull latest</button></div></form></section>
     <section class="card glass s12"><h3>🎨 Appearance</h3>
       <div class="themes">
         <button data-act="theme" data-v="forest" class="${THEME === 'forest' ? 'on' : ''}"><div class="sw forest"></div><b>Firefly Forest</b><div class="small muted">Misty forest, fireflies, lime glass</div></button>
@@ -835,9 +835,9 @@ async function sync() {
       const cur = await fetch(`${url}?ref=${encodeURIComponent(GH.branch || 'main')}`, { headers: h, cache: 'no-store' });
       const sha = cur.ok ? (await cur.json()).sha : undefined;
       const r = await fetch(url, { method: 'PUT', headers: h, body: JSON.stringify({ message: `LifeOS vault update ${new Date().toISOString()}`, content: btoa(JSON.stringify(blob)), branch: GH.branch || 'main', sha }) });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || r.status);
+      if (!r.ok) { const j = await r.json().catch(() => ({})); const need = r.headers.get('x-accepted-github-permissions'); throw new Error(`${r.status} · ${j.message || 'error'}${need ? ` (needs ${need})` : ''}`); }
       DATA.meta.dirty = false; await saveLocal(); render(); toast('✅ Synced to GitHub. Live in about a minute.');
-    } catch (e) { toast('⚠️ GitHub push failed: ' + esc(e.message)); }
+    } catch (e) { ghTest(`Push failed: ${e.message}`); }
   } else {
     download('data.enc.json', JSON.stringify(blob));
     DATA.meta.dirty = false; await saveLocal(); render();
@@ -855,9 +855,51 @@ async function ghPull() {
     DATA = d; DATA.meta.dirty = false; await saveLocal(); render(); toast('Pulled latest from GitHub');
   } catch (e) { toast('⚠️ Pull failed: ' + esc(e.message)); }
 }
+/* Step-by-step GitHub diagnostics: tells you exactly which setting is wrong */
+async function ghTest(headline) {
+  const rows = [], add = (ok, t, fix = '') => rows.push(`<div class="ins ${ok === true ? 'good' : ok === 'warn' ? 'warn' : 'bad'}"><div class="ii">${ok === true ? '✅' : ok === 'warn' ? '⚠️' : '❌'}</div><p>${t}${fix ? `<br><span class="small muted">${fix}</span>` : ''}</p></div>`);
+  const show = done => modal(`<h2>GitHub connection check</h2>${headline ? `<p class="small" style="color:var(--bad);margin-bottom:10px">${esc(headline)}</p>` : ''}${rows.join('')}${done ? '' : '<p class="small muted" style="margin-top:10px">Checking…</p>'}
+    <div class="row end" style="margin-top:16px"><button class="btn" data-act="dlVault">${icon('down', 16)} Download data.enc.json instead</button><button class="btn primary" data-act="closeModal">Close</button></div>`);
+  const g = GH || {};
+  if (!g.token) { add(false, 'No token saved.', 'Paste a token in Vault → GitHub sync and press Save settings.'); return show(true); }
+  show(false);
+  const h = { Authorization: `Bearer ${g.token}`, Accept: 'application/vnd.github+json' };
+  try {
+    const u = await fetch('https://api.github.com/user', { headers: h, cache: 'no-store' });
+    if (u.status === 401) { add(false, 'GitHub rejected the token (401): it is wrong, expired or was deleted.', 'Generate a new token and paste it again, with no spaces before or after it.'); return show(true); }
+    const kind = g.token.startsWith('github_pat_') ? 'fine-grained' : g.token.startsWith('ghp_') ? 'classic' : 'unknown-type';
+    const scopes = u.headers.get('x-oauth-scopes');
+    const login = u.ok ? (await u.json()).login : null;
+    add(true, `Token works (${kind}) · signed in as <b>${esc(login || '?')}</b>${kind === 'classic' ? ` · scopes: <b>${esc(scopes || 'none')}</b>` : ''}`);
+    if (kind === 'classic' && !/\b(public_)?repo\b/.test(scopes || '')) add(false, 'This classic token has no <b>repo</b> scope, so it cannot write.', 'Edit the token on GitHub and tick “repo”.');
+    if (login && g.owner && login.toLowerCase() !== g.owner.toLowerCase()) add('warn', `Owner is set to <b>${esc(g.owner)}</b> but the token belongs to <b>${esc(login)}</b>.`, `If the repo is under your own account, set Owner to “${esc(login)}”. If it belongs to an organisation, create the token with that organisation as Resource owner.`);
+    const r = await fetch(`https://api.github.com/repos/${g.owner}/${g.repo}`, { headers: h, cache: 'no-store' });
+    if (r.status === 404) { add(false, `Repo <b>${esc(g.owner)}/${esc(g.repo)}</b> not found for this token.`, 'Check the spelling of Owner and Repo. For a fine-grained token: Repository access → Only select repositories → tick this repo.'); return show(true); }
+    if (!r.ok) { add(false, `Couldn't open the repo (${r.status}).`); return show(true); }
+    const repo = await r.json();
+    add(true, `Repo found: <b>${esc(repo.full_name)}</b> (${repo.private ? 'private' : 'public'}) · default branch <b>${esc(repo.default_branch)}</b>`);
+    if ((g.branch || 'main') !== repo.default_branch) add('warn', `Branch is set to “${esc(g.branch || 'main')}” but the repo uses “${esc(repo.default_branch)}”.`, `Change Branch to “${esc(repo.default_branch)}” in Vault → GitHub sync.`);
+    // real write test on a tiny probe file, then delete it
+    const url = `https://api.github.com/repos/${g.owner}/${g.repo}/contents/.lifeos-probe`;
+    const w = await fetch(url, { method: 'PUT', headers: h, body: JSON.stringify({ message: 'LifeOS connection test', content: btoa(String(Date.now())), branch: repo.default_branch }) });
+    if (w.ok) {
+      const sha = (await w.json()).content?.sha; add(true, '<b>Write access works.</b> Sync should succeed now.');
+      if (sha) fetch(url, { method: 'DELETE', headers: h, body: JSON.stringify({ message: 'LifeOS connection test cleanup', sha, branch: repo.default_branch }) });
+    } else {
+      const j = await w.json().catch(() => ({})), need = w.headers.get('x-accepted-github-permissions');
+      add(false, `Can read the repo but <b>cannot write</b> (${w.status}: ${esc(j.message || '')}${need ? `, needs <code>${esc(need)}</code>` : ''}).`,
+        kind === 'fine-grained' ? 'On GitHub: Settings → Developer settings → Fine-grained tokens → your token → Permissions → Repository permissions → <b>Contents: Read and write</b> → Update. Also make sure Repository access includes this repo.' : 'Tick the “repo” scope on this token (or create a new classic token with it).');
+    }
+  } catch (e) { add(false, 'Network error talking to GitHub: ' + esc(e.message), 'Check your internet connection, or turn off any content blocker for api.github.com.'); }
+  show(true);
+}
 async function saveGH(e) {
   e.preventDefault(); const f = new FormData(e.target);
-  GH = { owner: f.get('owner').trim(), repo: f.get('repo').trim(), branch: f.get('branch').trim() || 'main', token: f.get('token').trim() };
+  const clean = v => String(v || '').trim().replace(/^https?:\/\/(www\.)?github\.com\//i, '').replace(/^@/, '').replace(/\/+$/, '').replace(/\.git$/, '');
+  let owner = clean(f.get('owner')), repo = clean(f.get('repo'));
+  if (owner.includes('/')) [owner, repo] = owner.split('/');           // pasted "user/repo" or a URL into Owner
+  if (repo.includes('/')) repo = repo.split('/').pop();
+  GH = { owner, repo, branch: f.get('branch').trim() || 'main', token: f.get('token').replace(/\s+/g, '') };
   ls.set(LS_GH, await encryptWith(KEY, SALT, GH)); toast('GitHub settings saved (encrypted)'); render();
 }
 function download(name, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
@@ -969,6 +1011,8 @@ const A = {
   forget: async () => { await idb.del('key'); toast('This device will ask for the passphrase next time'); },
   sync,
   ghPull,
+  ghTest: () => ghTest(),
+  dlVault: async () => { const blob = await encryptWith(KEY, SALT, { ...DATA, meta: { ...DATA.meta, dirty: false } }); download('data.enc.json', JSON.stringify(blob)); closeModal(); toast('Downloaded data.enc.json. Upload it to your repo.'); },
   quest: ({ id }) => {
     const T = todayKey(), before = S.xp, lvl = S.level; DATA.log[T] ||= { q: {} }; DATA.log[T].q ||= {};
     DATA.log[T].q[id] = !DATA.log[T].q[id]; if (DATA.log[T].q[id]) { const q = DATA.quests.find(x => x.id === id); logAct(q?.icon || '⭐', `Quest done: ${q?.title}`); } commit();
@@ -980,11 +1024,22 @@ const A = {
   addQuest: () => form('New daily quest', [{ k: 'title', label: 'Quest', req: true, ph: 'e.g. 10 min meditation' }, { k: 'icon', label: 'Emoji', value: '⭐' }, { k: 'attr', label: 'Attribute', type: 'select', options: attrOpts, value: 'DIS' }, { k: 'xp', label: 'XP', type: 'number', value: 15 }, { k: 'days', label: 'Days', type: 'select', options: [['all', 'Every day'], ['1,2,3,4,5,6', 'Mon–Sat'], ['1,2,3,4,5', 'Weekdays'], ['0,6', 'Weekends']], value: 'all' }],
     v => { DATA.quests.push({ id: uid(), ...v, days: v.days === 'all' ? undefined : v.days.split(',').map(Number), xp: v.xp || 10 }); commit(); }, `<p class="small dim" style="margin-bottom:12px">To remove or reorder quests, use the raw editor in Vault.</p>`),
   editStatus: () => form('Set your status', [{ k: 'emoji', label: 'Emoji', value: DATA.profile.status?.emoji }, { k: 'text', label: 'Status', value: DATA.profile.status?.text, ph: "What's your vibe?" }], v => { DATA.profile.status = v; commit(); }),
-  editProfile: () => { const P = DATA.profile; form('Profile', [
+  editProfile: () => { const P = DATA.profile, stored = (P.photo || '').startsWith('data:'); let up = null, removed = false;
+    form('Profile', [
     { k: 'name', label: 'Name', value: P.name, req: true }, { k: 'tagline', label: 'Tagline', value: P.tagline }, { k: 'dob', label: 'Date & time of birth', type: 'datetime-local', value: P.dob },
-    { k: 'location', label: 'Location', value: P.location }, { k: 'avatar', label: 'Avatar emoji', value: P.avatar }, { k: 'photo', label: 'Photo URL (optional, e.g. your GitHub avatar)', value: P.photo },
+    { k: 'location', label: 'Location', value: P.location }, { k: 'avatar', label: 'Avatar emoji (shown when there is no photo)', value: P.avatar },
+    { k: 'photo', label: 'Photo URL (optional), or upload one below', value: stored ? '' : P.photo, ph: 'https://github.com/your-username.png' },
     { k: 'heightCm', label: 'Height (cm)', type: 'number', value: P.heightCm }, { k: 'lifeYears', label: 'Life-expectancy horizon (years)', type: 'number', value: P.lifeYears || 80 }],
-    v => { Object.assign(DATA.profile, v); DATA.meta.demo = false; commit(); }); },
+    v => { const url = (v.photo || '').trim(); v.photo = up || url || (stored && !removed ? P.photo : ''); Object.assign(DATA.profile, v); DATA.meta.demo = false; commit(); toast('Profile saved'); },
+    `<div class="field"><label class="fl">Upload a photo (stored encrypted in your vault)</label>
+      <div class="row"><div class="icbtn av" id="pprev" style="width:64px;height:64px;font-size:30px">${P.photo ? `<img src="${esc(P.photo)}" alt="">` : esc(P.avatar || '🙂')}</div>
+      <label class="btn">${icon('up', 16)} Choose photo<input type="file" accept="image/*" id="pfile" hidden></label>
+      <button type="button" class="btn danger sm" id="prm">Remove</button></div></div>`);
+    $('#pfile').onchange = async e => { const f = e.target.files[0]; if (!f) return;
+      try { up = await squarePhoto(f, 320); $('#pprev').innerHTML = `<img src="${up}" alt="">`; $('#mf [name=photo]').value = ''; toast('Photo ready. Press Save.'); }
+      catch { toast('⚠️ Could not read that image'); } };
+    $('#prm').onclick = () => { up = null; removed = true; $('#mf [name=photo]').value = ''; $('#pprev').textContent = P.avatar || '🙂'; };
+  },
   addGoal: () => goalForm(), editGoal: ({ id }) => goalForm(DATA.goals.find(g => g.id === id)),
   delGoal: ({ id }) => { if (confirm('Delete this goal?')) { DATA.goals = DATA.goals.filter(g => g.id !== id); commit(); } },
   ms: ({ id, i }) => { const g = DATA.goals.find(x => x.id === id), m = g.milestones[+i], b = S.xp; m.done = !m.done; if (m.done) logAct('🧭', `Milestone: ${m.t}`); commit(); const d = S.xp - b; if (d > 0) { xpToast(d); confetti(goalPct(g) >= 100 ? 200 : 50); } },
@@ -1030,6 +1085,15 @@ const A = {
   wDemo: () => setPass(normalize(makeDemo())),
   wBlank: () => { const d = makeDemo(); setPass(normalize({ profile: { name: 'You', dob: '', tagline: '', location: '', avatar: '🙂' }, quests: d.quests, routine: [], meta: { demo: false } })); },
 };
+async function squarePhoto(file, size = 320) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const s = Math.min(img.naturalWidth, img.naturalHeight), c = document.createElement('canvas'); c.width = c.height = size;
+    c.getContext('2d').drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, size, size);
+    return c.toDataURL('image/jpeg', 0.85);
+  } finally { URL.revokeObjectURL(url); }
+}
 function goalForm(g) {
   form(g ? 'Edit goal' : 'New goal', [{ k: 'title', label: 'Goal', value: g?.title, req: true }, { k: 'category', label: 'Category', value: g?.category || 'Personal' },
     { k: 'attr', label: 'Attribute', type: 'select', options: attrOpts, value: g?.attr || 'DIS' }, { k: 'start', label: 'Start', type: 'date', value: g?.start || todayKey() }, { k: 'due', label: 'Deadline', type: 'date', value: g?.due },
